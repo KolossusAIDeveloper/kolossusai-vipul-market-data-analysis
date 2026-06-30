@@ -14,22 +14,33 @@ def test_imports():
     assert True
 
 
+def make_test_df(n=300):
+    dates = pd.date_range("2022-01-01", periods=n, freq="D")
+    np.random.seed(42)
+    close = 22000 + np.cumsum(np.random.randn(n) * 100)
+    close = np.abs(close) + 1000  # ensure positive
+    return pd.DataFrame({
+        "open": close * 0.998,
+        "high": close * 1.005,
+        "low": close * 0.995,
+        "close": close,
+        "volume": np.random.randint(1000000, 5000000, n).astype(float),
+    }, index=dates)
+
+
 def test_compute_indicators():
     from pages_src.data_utils import compute_indicators
-    dates = pd.date_range("2024-01-01", periods=100, freq="D")
-    df = pd.DataFrame({
-        "open": np.random.uniform(23000, 24000, 100),
-        "high": np.random.uniform(24000, 25000, 100),
-        "low": np.random.uniform(22000, 23000, 100),
-        "close": np.random.uniform(23000, 24000, 100),
-        "volume": np.random.randint(1000000, 5000000, 100),
-    }, index=dates)
+    df = make_test_df(300)
     result = compute_indicators(df)
     assert "rsi" in result.columns
     assert "macd" in result.columns
     assert "sma20" in result.columns
     assert "bb_upper" in result.columns
-    assert len(result) == 100
+    assert "supertrend" in result.columns
+    assert len(result) == 300
+    # After dropping NaN, should have at least 200 rows
+    valid = result.dropna()
+    assert len(valid) > 50, f"Only {len(valid)} valid rows after dropna"
 
 
 def test_sentiment_scoring():
@@ -45,19 +56,11 @@ def test_sentiment_scoring():
 
 def test_backtest_engine():
     from pages_src.strategy import run_backtest
-    from pages_src.data_utils import compute_indicators
-    dates = pd.date_range("2023-01-01", periods=200, freq="D")
-    np.random.seed(42)
-    close = 22000 + np.cumsum(np.random.randn(200) * 100)
-    df = pd.DataFrame({
-        "open": close * 0.998,
-        "high": close * 1.005,
-        "low": close * 0.995,
-        "close": close,
-        "volume": np.random.randint(1000000, 5000000, 200),
-    }, index=dates)
+    df = make_test_df(300)
     strategy = {"rule": "rsi_oversold", "rsi_buy": 30, "rsi_sell": 70, "sl_pct": 2.0, "target_pct": 4.0}
     result = run_backtest(df, strategy, 100000.0)
+    assert isinstance(result, dict), "run_backtest should return a dict"
+    assert len(result) > 0, f"run_backtest returned empty dict"
     assert "total_return" in result
     assert "sharpe" in result
     assert "equity_curve" in result

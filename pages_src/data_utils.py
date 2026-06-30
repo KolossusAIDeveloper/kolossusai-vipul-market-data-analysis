@@ -121,18 +121,23 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # Supertrend
     atr_mult = 3.0
     hl2 = (df["high"] + df["low"]) / 2
-    upper_band = hl2 + atr_mult * df["atr"]
-    lower_band = hl2 - atr_mult * df["atr"]
-    supertrend = pd.Series(index=df.index, dtype=float)
-    direction = pd.Series(index=df.index, dtype=int)
+    upper_band = (hl2 + atr_mult * df["atr"]).values
+    lower_band = (hl2 - atr_mult * df["atr"]).values
+    close_vals = df["close"].values
+    supertrend = np.full(len(df), np.nan)
+    direction = np.zeros(len(df), dtype=int)
     for i in range(1, len(df)):
-        if df["close"].iloc[i] > upper_band.iloc[i - 1]:
-            direction.iloc[i] = 1
-        elif df["close"].iloc[i] < lower_band.iloc[i - 1]:
-            direction.iloc[i] = -1
+        if np.isnan(upper_band[i - 1]) or np.isnan(lower_band[i - 1]):
+            direction[i] = 0
+            supertrend[i] = np.nan
+        elif close_vals[i] > upper_band[i - 1]:
+            direction[i] = 1
+        elif close_vals[i] < lower_band[i - 1]:
+            direction[i] = -1
         else:
-            direction.iloc[i] = direction.iloc[i - 1]
-        supertrend.iloc[i] = lower_band.iloc[i] if direction.iloc[i] == 1 else upper_band.iloc[i]
+            direction[i] = direction[i - 1]
+        if not np.isnan(upper_band[i]) and not np.isnan(lower_band[i]):
+            supertrend[i] = lower_band[i] if direction[i] == 1 else upper_band[i]
     df["supertrend"] = supertrend
     df["supertrend_dir"] = direction
     return df

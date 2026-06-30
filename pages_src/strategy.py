@@ -14,7 +14,7 @@ def run_backtest(df: pd.DataFrame, strategy: dict, capital: float) -> dict:
     df = compute_indicators(df)
     df = df.dropna()
 
-    if df.empty or len(df) < 50:
+    if df.empty or len(df) < 10:
         return {}
 
     positions = []
