@@ -35,9 +35,9 @@ RUN ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default \
 # Configure supervisord
 COPY supervisord.conf /app/supervisord.conf
 
-EXPOSE 80
+EXPOSE 8000
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=5 \
-  CMD curl -sf http://localhost/health || exit 1
+  CMD curl -sf http://localhost:8000/health || exit 1
 
 CMD ["/usr/bin/supervisord", "-c", "/app/supervisord.conf"]
