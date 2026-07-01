@@ -21,9 +21,9 @@ COPY backend/ /app/backend/
 # Copy React build into /app/static (served by FastAPI StaticFiles)
 COPY --from=frontend-build /build/dist /app/static
 
-EXPOSE 8000
+EXPOSE 8501
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=90s --retries=5 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8501/health')" || exit 1
 
-CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
+CMD ["python", "-m", "uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8501", "--log-level", "info"]
