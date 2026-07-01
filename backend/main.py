@@ -1,9 +1,11 @@
 import asyncio
+import pathlib
 from concurrent.futures import ThreadPoolExecutor
 from typing import List
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from backend import data_utils
@@ -18,6 +20,11 @@ app.add_middleware(
 )
 
 _pool = ThreadPoolExecutor(max_workers=16)
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 
 @app.get("/api/config")
@@ -67,6 +74,7 @@ def news():
     return data_utils.fetch_news()
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+# --- Serve React SPA (after all API routes) ---
+STATIC_DIR = pathlib.Path("/app/static")
+if STATIC_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="spa")
