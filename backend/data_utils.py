@@ -94,7 +94,7 @@ def _fetch_history(ticker: str, period: str, interval: str) -> pd.DataFrame:
         pass
     try:
         df = yf.download(ticker, period=period, interval=interval, auto_adjust=True,
-                         progress=False, threads=False)
+                         progress=False)
         return df if not df.empty else pd.DataFrame()
     except Exception:
         return pd.DataFrame()
