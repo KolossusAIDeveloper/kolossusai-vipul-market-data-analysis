@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import streamlit as st
+import requests
 
 INDICES = {
     "Nifty 50": "^NSEI",
@@ -36,26 +37,85 @@ NSE_STOCKS = {
     "NTPC": "NTPC.NS",
 }
 
-@st.cache_data(ttl=60)
+
+def _make_session() -> requests.Session:
+    """Create a requests session that mimics a real browser to bypass rate limits."""
+    sess = requests.Session()
+    sess.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+    })
+    return sess
+
+
+# Module-level session reused across all calls
+_SESSION = _make_session()
+
+
+def _fetch_history(ticker: str, period: str, interval: str) -> pd.DataFrame:
+    """Try Ticker.history first; fall back to yf.download on failure."""
+    # Attempt 1: Ticker with session
+    try:
+        t = yf.Ticker(ticker, session=_SESSION)
+        df = t.history(period=period, interval=interval, auto_adjust=True)
+        if not df.empty:
+            return df
+    except Exception:
+        pass
+
+    # Attempt 2: yf.download (different code path inside yfinance)
+    try:
+        df = yf.download(
+            ticker,
+            period=period,
+            interval=interval,
+            auto_adjust=True,
+            progress=False,
+            threads=False,
+        )
+        return df if not df.empty else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
 def get_quote(ticker: str) -> dict:
     try:
-        t = yf.Ticker(ticker)
-        info = t.fast_info
-        hist = t.history(period="2d", interval="1d")
-        if hist.empty:
+        df = _fetch_history(ticker, period="5d", interval="1d")
+        if df.empty:
             return {}
-        last = hist.iloc[-1]
-        prev = hist.iloc[-2] if len(hist) > 1 else hist.iloc[-1]
-        price = float(last["Close"])
-        prev_close = float(prev["Close"])
+
+        # Flatten multi-level columns produced by yf.download
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = [c[0].lower() for c in df.columns]
+        else:
+            df.columns = [c.lower() for c in df.columns]
+
+        df = df.dropna(subset=["close"])
+        if df.empty:
+            return {}
+
+        last = df.iloc[-1]
+        prev = df.iloc[-2] if len(df) > 1 else df.iloc[-1]
+
+        price = float(last["close"])
+        prev_close = float(prev["close"])
         change = price - prev_close
         change_pct = (change / prev_close) * 100
+
         return {
             "price": round(price, 2),
-            "open": round(float(last["Open"]), 2),
-            "high": round(float(last["High"]), 2),
-            "low": round(float(last["Low"]), 2),
-            "volume": int(last["Volume"]),
+            "open": round(float(last.get("open", price)), 2),
+            "high": round(float(last.get("high", price)), 2),
+            "low": round(float(last.get("low", price)), 2),
+            "volume": int(last.get("volume", 0)),
             "prev_close": round(prev_close, 2),
             "change": round(change, 2),
             "change_pct": round(change_pct, 2),
@@ -64,18 +124,34 @@ def get_quote(ticker: str) -> dict:
         return {}
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=300, show_spinner=False)
 def get_ohlcv(ticker: str, interval: str = "1d", period: str = "6mo") -> pd.DataFrame:
     try:
-        t = yf.Ticker(ticker)
-        df = t.history(period=period, interval=interval)
+        df = _fetch_history(ticker, period=period, interval=interval)
         if df.empty:
             return pd.DataFrame()
-        df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
+
+        # Flatten multi-level columns produced by yf.download
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = [c[0].lower() for c in df.columns]
+        else:
+            df.columns = [c.lower() for c in df.columns]
+
+        needed = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
+        if not needed:
+            return pd.DataFrame()
+
+        df = df[needed].copy()
         df.index = pd.to_datetime(df.index)
-        df.index = df.index.tz_localize(None) if df.index.tzinfo else df.index
-        df.columns = ["open", "high", "low", "close", "volume"]
-        df = df.dropna()
+        if df.index.tzinfo is not None:
+            df.index = df.index.tz_localize(None)
+
+        # Ensure all expected columns exist
+        for col in ["open", "high", "low", "close", "volume"]:
+            if col not in df.columns:
+                df[col] = np.nan
+
+        df = df.dropna(subset=["close"])
         return df
     except Exception:
         return pd.DataFrame()
@@ -116,7 +192,8 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # Stochastic
     low14 = df["low"].rolling(14).min()
     high14 = df["high"].rolling(14).max()
-    df["stoch_k"] = 100 * (df["close"] - low14) / (high14 - low14)
+    denom = (high14 - low14).replace(0, np.nan)
+    df["stoch_k"] = 100 * (df["close"] - low14) / denom
     df["stoch_d"] = df["stoch_k"].rolling(3).mean()
     # Supertrend
     atr_mult = 3.0

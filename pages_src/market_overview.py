@@ -31,7 +31,6 @@ def show():
         with idx_cols[i]:
             data = get_quote(ticker)
             if data:
-                delta_color = "normal" if data["change"] >= 0 else "inverse"
                 st.metric(
                     label=name,
                     value=f"₹{data['price']:,.2f}" if "BSESN" in ticker or "NSEI" in ticker else f"{data['price']:,.2f}",
@@ -39,7 +38,7 @@ def show():
                     delta_color="normal" if data["change"] >= 0 else "inverse",
                 )
             else:
-                st.metric(label=name, value="Loading...")
+                st.metric(label=name, value="—", delta="No data", delta_color="off")
 
     st.divider()
 
