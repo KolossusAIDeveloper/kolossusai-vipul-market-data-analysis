@@ -1,31 +1,38 @@
+# Stage 1: Build React frontend
+FROM node:20-alpine AS frontend-build
+WORKDIR /build
+COPY frontend/package.json ./
+RUN npm install
+COPY frontend/ ./
+RUN npm run build
+
+# Stage 2: Runtime (Python + nginx + supervisord)
 FROM python:3.11-slim
 
+# Install nginx and supervisor
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends nginx supervisor && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
 WORKDIR /app
+COPY backend/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
-    libssl-dev \
-    libffi-dev \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Copy backend
+COPY backend/ /app/backend/
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Copy React build
+COPY --from=frontend-build /build/dist /var/www/html
 
-COPY . .
+# Copy configs
+COPY nginx.conf /etc/nginx/sites-available/default
+COPY supervisord.conf /etc/supervisord.conf
 
-EXPOSE 8501
+# Remove default nginx site and enable ours
+RUN rm -f /etc/nginx/sites-enabled/default && \
+    ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
 
-ENV STREAMLIT_SERVER_PORT=8501
-ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
-ENV STREAMLIT_SERVER_HEADLESS=true
-ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
-ENV STREAMLIT_THEME_BASE=dark
-ENV STREAMLIT_THEME_BACKGROUND_COLOR="#0d1117"
-ENV STREAMLIT_THEME_SECONDARY_BACKGROUND_COLOR="#161b22"
-ENV STREAMLIT_THEME_TEXT_COLOR="#e6edf3"
-ENV STREAMLIT_THEME_PRIMARY_COLOR="#238636"
+EXPOSE 80
 
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["supervisord", "-c", "/etc/supervisord.conf"]
