@@ -14,6 +14,12 @@ INDICES = {
     "Nifty Midcap 100": "^NSEMDCP100",
 }
 
+INDEX_SCRAPE_FALLBACKS = {
+    "^NSEI": "https://www.google.com/finance/quote/NIFTY_50:INDEXNSE",
+    "^BSESN": "https://www.google.com/finance/quote/SENSEX:INDEXBOM",
+    "^NSEBANK": "https://www.google.com/finance/quote/NIFTY_BANK:INDEXNSE",
+}
+
 NSE_STOCKS = {
     "Reliance": "RELIANCE.NS",
     "TCS": "TCS.NS",
@@ -78,18 +84,40 @@ def _fetch_history(ticker: str, period: str, interval: str) -> pd.DataFrame:
             interval=interval,
             auto_adjust=True,
             progress=False,
-            threads=False,
         )
-        return df if not df.empty else pd.DataFrame()
+        if not df.empty:
+            return df
     except Exception:
-        return pd.DataFrame()
+        pass
+
+    return pd.DataFrame()
+
+
+def _scrape_google_quote(url: str) -> dict:
+    try:
+        response = _SESSION.get(url, timeout=10)
+        response.raise_for_status()
+        text = response.text
+        import re
+        price_match = re.search(r'"(?:price|priceData)".*?"raw":([0-9,.]+)', text)
+        if not price_match:
+            price_match = re.search(r'currentPrice.*?raw":([0-9,.]+)', text)
+        if not price_match:
+            return {}
+        price = float(price_match.group(1).replace(",", ""))
+        return {"price": round(price, 2)}
+    except Exception:
+        return {}
 
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_quote(ticker: str) -> dict:
     try:
         df = _fetch_history(ticker, period="5d", interval="1d")
-        if df.empty:
+        if df.empty and ticker in INDEX_SCRAPE_FALLBACKS:
+            scraped = _scrape_google_quote(INDEX_SCRAPE_FALLBACKS[ticker])
+            if scraped:
+                return scraped
             return {}
 
         # Flatten multi-level columns produced by yf.download
@@ -100,6 +128,8 @@ def get_quote(ticker: str) -> dict:
 
         df = df.dropna(subset=["close"])
         if df.empty:
+            if ticker in INDEX_SCRAPE_FALLBACKS:
+                return _scrape_google_quote(INDEX_SCRAPE_FALLBACKS[ticker])
             return {}
 
         last = df.iloc[-1]
@@ -108,7 +138,7 @@ def get_quote(ticker: str) -> dict:
         price = float(last["close"])
         prev_close = float(prev["close"])
         change = price - prev_close
-        change_pct = (change / prev_close) * 100
+        change_pct = (change / prev_close) * 100 if prev_close else 0.0
 
         return {
             "price": round(price, 2),
@@ -121,6 +151,8 @@ def get_quote(ticker: str) -> dict:
             "change_pct": round(change_pct, 2),
         }
     except Exception:
+        if ticker in INDEX_SCRAPE_FALLBACKS:
+            return _scrape_google_quote(INDEX_SCRAPE_FALLBACKS[ticker])
         return {}
 
 

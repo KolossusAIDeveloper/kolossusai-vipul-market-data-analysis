@@ -50,6 +50,7 @@ def show():
 
     # Indicator toggles
     st.markdown("**Overlay Indicators**")
+    st.caption("Clean Zerodha-style layout: minimal clutter, right-side price scale, and focus on candlesticks + volume.")
     ind_cols = st.columns(8)
     show_sma20 = ind_cols[0].checkbox("SMA 20", value=True)
     show_sma50 = ind_cols[1].checkbox("SMA 50", value=False)
@@ -94,8 +95,10 @@ def show():
         x=df.index, open=df["open"], high=df["high"],
         low=df["low"], close=df["close"],
         name="OHLC",
-        increasing_line_color="#00ff88", increasing_fillcolor="#00ff88",
-        decreasing_line_color="#ff4444", decreasing_fillcolor="#ff4444",
+        increasing_line_color="#22c55e", increasing_fillcolor="#22c55e",
+        decreasing_line_color="#ef4444", decreasing_fillcolor="#ef4444",
+        increasing_width=1,
+        decreasing_width=1,
     ), row=1, col=1)
 
     if show_sma20 and "sma20" in df.columns:
@@ -150,15 +153,30 @@ def show():
                               marker_color=hist_colors, opacity=0.7), row=current_row, col=1)
 
     fig.update_layout(
-        height=700, template="plotly_dark",
+        height=760, template="plotly_dark",
         paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
         xaxis_rangeslider_visible=False,
-        margin=dict(l=0, r=10, t=30, b=0),
-        legend=dict(bgcolor="rgba(0,0,0,0.5)", font=dict(size=10), orientation="h", y=1.02),
-        font=dict(color="#e6edf3"),
+        margin=dict(l=8, r=8, t=24, b=8),
+        legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=10), orientation="h", y=1.02, x=0),
+        font=dict(color="#d1d5db"),
     )
-    fig.update_xaxes(gridcolor="#1f2937", zeroline=False, showgrid=True)
-    fig.update_yaxes(gridcolor="#1f2937", zeroline=False, showgrid=True)
+    fig.update_xaxes(
+        gridcolor="#1f2937",
+        zeroline=False,
+        showgrid=True,
+        showline=False,
+        ticks="outside",
+        tickfont=dict(color="#9ca3af"),
+        rangeslider_visible=False,
+    )
+    fig.update_yaxes(
+        gridcolor="#1f2937",
+        zeroline=False,
+        showgrid=True,
+        showline=False,
+        tickfont=dict(color="#9ca3af"),
+        side="right",
+    )
     for ann in fig.layout.annotations:
         ann.font.color = "#8b949e"
         ann.font.size = 11
