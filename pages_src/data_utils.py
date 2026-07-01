@@ -1,7 +1,6 @@
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
 import streamlit as st
 import requests
 
@@ -12,12 +11,6 @@ INDICES = {
     "Nifty IT": "^CNXIT",
     "Nifty Pharma": "^CNXPHARMA",
     "Nifty Midcap 100": "^NSEMDCP100",
-}
-
-INDEX_SCRAPE_FALLBACKS = {
-    "^NSEI": "https://www.google.com/finance/quote/NIFTY_50:INDEXNSE",
-    "^BSESN": "https://www.google.com/finance/quote/SENSEX:INDEXBOM",
-    "^NSEBANK": "https://www.google.com/finance/quote/NIFTY_BANK:INDEXNSE",
 }
 
 NSE_STOCKS = {
@@ -45,7 +38,6 @@ NSE_STOCKS = {
 
 
 def _make_session() -> requests.Session:
-    """Create a requests session that mimics a real browser to bypass rate limits."""
     sess = requests.Session()
     sess.headers.update({
         "User-Agent": (
@@ -53,7 +45,7 @@ def _make_session() -> requests.Session:
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/124.0.0.0 Safari/537.36"
         ),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept": "application/json,text/html,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
         "Accept-Encoding": "gzip, deflate, br",
         "Connection": "keep-alive",
@@ -61,85 +53,70 @@ def _make_session() -> requests.Session:
     return sess
 
 
-# Module-level session reused across all calls
 _SESSION = _make_session()
 
+# Yahoo Finance v8 API hosts to try in order
+_YF_HOSTS = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]
 
-def _fetch_history(ticker: str, period: str, interval: str) -> pd.DataFrame:
-    """Try Ticker.history first; fall back to yf.download on failure."""
-    # Attempt 1: Ticker with session
+
+def _yahoo_v8_quote(ticker: str) -> dict:
+    """Fetch real-time quote directly from Yahoo Finance chart v8 API."""
+    for host in _YF_HOSTS:
+        try:
+            url = f"https://{host}/v8/finance/chart/{ticker}"
+            resp = _SESSION.get(url, params={"range": "5d", "interval": "1d"}, timeout=12)
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            result = data.get("chart", {}).get("result", [])
+            if not result:
+                continue
+            meta = result[0].get("meta", {})
+            price = float(meta.get("regularMarketPrice") or 0)
+            if price == 0:
+                continue
+            prev_close = float(
+                meta.get("chartPreviousClose") or meta.get("previousClose") or price
+            )
+            change = price - prev_close
+            change_pct = (change / prev_close * 100) if prev_close else 0.0
+            return {
+                "price": round(price, 2),
+                "open": round(float(meta.get("regularMarketOpen") or price), 2),
+                "high": round(float(meta.get("regularMarketDayHigh") or price), 2),
+                "low": round(float(meta.get("regularMarketDayLow") or price), 2),
+                "volume": int(meta.get("regularMarketVolume") or 0),
+                "prev_close": round(prev_close, 2),
+                "change": round(change, 2),
+                "change_pct": round(change_pct, 2),
+            }
+        except Exception:
+            continue
+    return {}
+
+
+def _yfinance_quote(ticker: str) -> dict:
+    """Fetch quote via yfinance as fallback."""
     try:
         t = yf.Ticker(ticker, session=_SESSION)
-        df = t.history(period=period, interval=interval, auto_adjust=True)
-        if not df.empty:
-            return df
-    except Exception:
-        pass
-
-    # Attempt 2: yf.download (different code path inside yfinance)
-    try:
-        df = yf.download(
-            ticker,
-            period=period,
-            interval=interval,
-            auto_adjust=True,
-            progress=False,
-        )
-        if not df.empty:
-            return df
-    except Exception:
-        pass
-
-    return pd.DataFrame()
-
-
-def _scrape_google_quote(url: str) -> dict:
-    try:
-        response = _SESSION.get(url, timeout=10)
-        response.raise_for_status()
-        text = response.text
-        import re
-        price_match = re.search(r'"(?:price|priceData)".*?"raw":([0-9,.]+)', text)
-        if not price_match:
-            price_match = re.search(r'currentPrice.*?raw":([0-9,.]+)', text)
-        if not price_match:
+        df = t.history(period="5d", interval="1d", auto_adjust=True)
+        if df.empty:
+            df = yf.download(ticker, period="5d", interval="1d", auto_adjust=True, progress=False)
+        if df.empty:
             return {}
-        price = float(price_match.group(1).replace(",", ""))
-        return {"price": round(price, 2)}
-    except Exception:
-        return {}
-
-
-@st.cache_data(ttl=60, show_spinner=False)
-def get_quote(ticker: str) -> dict:
-    try:
-        df = _fetch_history(ticker, period="5d", interval="1d")
-        if df.empty and ticker in INDEX_SCRAPE_FALLBACKS:
-            scraped = _scrape_google_quote(INDEX_SCRAPE_FALLBACKS[ticker])
-            if scraped:
-                return scraped
-            return {}
-
-        # Flatten multi-level columns produced by yf.download
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = [c[0].lower() for c in df.columns]
         else:
             df.columns = [c.lower() for c in df.columns]
-
         df = df.dropna(subset=["close"])
         if df.empty:
-            if ticker in INDEX_SCRAPE_FALLBACKS:
-                return _scrape_google_quote(INDEX_SCRAPE_FALLBACKS[ticker])
             return {}
-
         last = df.iloc[-1]
         prev = df.iloc[-2] if len(df) > 1 else df.iloc[-1]
-
         price = float(last["close"])
         prev_close = float(prev["close"])
         change = price - prev_close
         change_pct = (change / prev_close) * 100 if prev_close else 0.0
-
         return {
             "price": round(price, 2),
             "open": round(float(last.get("open", price)), 2),
@@ -151,83 +128,139 @@ def get_quote(ticker: str) -> dict:
             "change_pct": round(change_pct, 2),
         }
     except Exception:
-        if ticker in INDEX_SCRAPE_FALLBACKS:
-            return _scrape_google_quote(INDEX_SCRAPE_FALLBACKS[ticker])
         return {}
 
 
-@st.cache_data(ttl=300, show_spinner=False)
-def get_ohlcv(ticker: str, interval: str = "1d", period: str = "6mo") -> pd.DataFrame:
+def _yahoo_v8_ohlcv(ticker: str, interval: str, range_: str) -> pd.DataFrame:
+    """Fetch OHLCV directly from Yahoo Finance chart v8 API."""
+    # Yahoo v8 uses "60m" instead of "1h"
+    iv = "60m" if interval == "1h" else interval
+    for host in _YF_HOSTS:
+        try:
+            url = f"https://{host}/v8/finance/chart/{ticker}"
+            resp = _SESSION.get(url, params={"range": range_, "interval": iv}, timeout=15)
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            result = data.get("chart", {}).get("result", [])
+            if not result:
+                continue
+            timestamps = result[0].get("timestamp", [])
+            quotes = result[0].get("indicators", {}).get("quote", [{}])[0]
+            if not timestamps:
+                continue
+            n = len(timestamps)
+            df = pd.DataFrame(
+                {
+                    "open": quotes.get("open", [np.nan] * n),
+                    "high": quotes.get("high", [np.nan] * n),
+                    "low": quotes.get("low", [np.nan] * n),
+                    "close": quotes.get("close", [np.nan] * n),
+                    "volume": quotes.get("volume", [0] * n),
+                },
+                index=pd.to_datetime(timestamps, unit="s"),
+            )
+            df.index.name = "datetime"
+            if df.index.tzinfo is not None:
+                df.index = df.index.tz_localize(None)
+            df = df.dropna(subset=["close"])
+            if not df.empty:
+                return df
+        except Exception:
+            continue
+    return pd.DataFrame()
+
+
+def _yfinance_ohlcv(ticker: str, period: str, interval: str) -> pd.DataFrame:
+    """Fetch OHLCV via yfinance as fallback."""
     try:
-        df = _fetch_history(ticker, period=period, interval=interval)
+        t = yf.Ticker(ticker, session=_SESSION)
+        df = t.history(period=period, interval=interval, auto_adjust=True)
+        if df.empty:
+            df = yf.download(ticker, period=period, interval=interval, auto_adjust=True, progress=False)
         if df.empty:
             return pd.DataFrame()
-
-        # Flatten multi-level columns produced by yf.download
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = [c[0].lower() for c in df.columns]
         else:
             df.columns = [c.lower() for c in df.columns]
-
         needed = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
         if not needed:
             return pd.DataFrame()
-
         df = df[needed].copy()
         df.index = pd.to_datetime(df.index)
         if df.index.tzinfo is not None:
             df.index = df.index.tz_localize(None)
+        return df.dropna(subset=["close"])
+    except Exception:
+        return pd.DataFrame()
 
-        # Ensure all expected columns exist
+
+# Map yfinance period strings to Yahoo v8 range strings
+_PERIOD_TO_RANGE = {
+    "1d": "1d",
+    "5d": "5d",
+    "10d": "1mo",
+    "1mo": "1mo",
+    "3mo": "3mo",
+    "6mo": "6mo",
+    "1y": "1y",
+    "2y": "2y",
+    "5y": "5y",
+    "60d": "3mo",
+}
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_quote(ticker: str) -> dict:
+    result = _yahoo_v8_quote(ticker)
+    if result:
+        return result
+    return _yfinance_quote(ticker)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_ohlcv(ticker: str, interval: str = "1d", period: str = "6mo") -> pd.DataFrame:
+    range_ = _PERIOD_TO_RANGE.get(period, period)
+    df = _yahoo_v8_ohlcv(ticker, interval, range_)
+    if not df.empty:
         for col in ["open", "high", "low", "close", "volume"]:
             if col not in df.columns:
                 df[col] = np.nan
-
-        df = df.dropna(subset=["close"])
         return df
-    except Exception:
-        return pd.DataFrame()
+    return _yfinance_ohlcv(ticker, period, interval)
 
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty or len(df) < 20:
         return df
     c = df["close"].copy()
-    # SMA
     df["sma20"] = c.rolling(20).mean()
     df["sma50"] = c.rolling(50).mean()
-    # EMA
     df["ema20"] = c.ewm(span=20, adjust=False).mean()
-    # Bollinger Bands
     df["bb_mid"] = c.rolling(20).mean()
     std = c.rolling(20).std()
     df["bb_upper"] = df["bb_mid"] + 2 * std
     df["bb_lower"] = df["bb_mid"] - 2 * std
-    # RSI
     delta = c.diff()
     gain = delta.where(delta > 0, 0.0).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0.0)).rolling(14).mean()
     rs = gain / loss
     df["rsi"] = 100 - (100 / (1 + rs))
-    # MACD
     ema12 = c.ewm(span=12, adjust=False).mean()
     ema26 = c.ewm(span=26, adjust=False).mean()
     df["macd"] = ema12 - ema26
     df["macd_signal"] = df["macd"].ewm(span=9, adjust=False).mean()
     df["macd_hist"] = df["macd"] - df["macd_signal"]
-    # ATR
     h, l, pc = df["high"], df["low"], df["close"].shift(1)
     tr = pd.concat([h - l, (h - pc).abs(), (l - pc).abs()], axis=1).max(axis=1)
     df["atr"] = tr.rolling(14).mean()
-    # VWAP (approximate daily)
     df["vwap"] = (df["close"] * df["volume"]).cumsum() / df["volume"].cumsum()
-    # Stochastic
     low14 = df["low"].rolling(14).min()
     high14 = df["high"].rolling(14).max()
     denom = (high14 - low14).replace(0, np.nan)
     df["stoch_k"] = 100 * (df["close"] - low14) / denom
     df["stoch_d"] = df["stoch_k"].rolling(3).mean()
-    # Supertrend
     atr_mult = 3.0
     hl2 = (df["high"] + df["low"]) / 2
     upper_band = (hl2 + atr_mult * df["atr"]).values

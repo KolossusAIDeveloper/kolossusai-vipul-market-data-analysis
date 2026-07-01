@@ -87,12 +87,14 @@ def show():
 
         q = get_quote(ticker)
         if q:
+            chg = q.get("change", 0)
+            chg_pct = q.get("change_pct", 0)
             st.markdown(f"""
             <div style="background:#161b22; border: 1px solid #30363d; border-radius:8px; padding:8px 12px; margin-bottom:8px;">
                 <span style="color:#8b949e; font-size:12px;">LTP:</span>
                 <span style="font-size:18px; font-weight:bold; color:#e6edf3;"> ₹{q['price']:,.2f}</span>
-                <span style="font-size:12px; color:{'#00ff88' if q['change'] >= 0 else '#ff4444'};">
-                    {q['change']:+.2f} ({q['change_pct']:+.2f}%)
+                <span style="font-size:12px; color:{'#00ff88' if chg >= 0 else '#ff4444'};">
+                    {chg:+.2f} ({chg_pct:+.2f}%)
                 </span>
             </div>
             """, unsafe_allow_html=True)

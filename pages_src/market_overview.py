@@ -31,11 +31,13 @@ def show():
         with idx_cols[i]:
             data = get_quote(ticker)
             if data:
+                chg = data.get("change", 0)
+                chg_pct = data.get("change_pct", 0)
                 st.metric(
                     label=name,
                     value=f"₹{data['price']:,.2f}" if "BSESN" in ticker or "NSEI" in ticker else f"{data['price']:,.2f}",
-                    delta=f"{data['change']:+.2f} ({data['change_pct']:+.2f}%)",
-                    delta_color="normal" if data["change"] >= 0 else "inverse",
+                    delta=f"{chg:+.2f} ({chg_pct:+.2f}%)",
+                    delta_color="normal" if chg >= 0 else "inverse",
                 )
             else:
                 st.metric(label=name, value="—", delta="No data", delta_color="off")
@@ -169,6 +171,6 @@ def show():
                 st.metric(
                     label=name,
                     value=f"{data['price']:,.2f}",
-                    delta=f"{data['change_pct']:+.2f}%",
-                    delta_color="normal" if data["change"] >= 0 else "inverse",
+                    delta=f"{data.get('change_pct', 0):+.2f}%",
+                    delta_color="normal" if data.get("change", 0) >= 0 else "inverse",
                 )
