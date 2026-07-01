@@ -8,9 +8,9 @@ from pages_src.data_utils import INDICES, NSE_STOCKS, get_ohlcv, compute_indicat
 ALL_SYMBOLS = {**INDICES, **NSE_STOCKS}
 
 INTERVAL_MAP = {
-    "1 min": ("1m", "5d"),
     "5 min": ("5m", "5d"),
     "15 min": ("15m", "10d"),
+    "1 min": ("1m", "5d"),
     "1 hour": ("1h", "60d"),
     "1 day": ("1d", "1y"),
     "1 week": ("1wk", "5y"),
@@ -30,10 +30,10 @@ def show():
     with col_sym:
         symbol_name = st.selectbox("Symbol", list(ALL_SYMBOLS.keys()), index=0)
     with col_tf:
-        timeframe = st.selectbox("Timeframe", list(INTERVAL_MAP.keys()), index=4)
+        timeframe = st.selectbox("Timeframe", list(INTERVAL_MAP.keys()), index=0)
     with col_btn:
         st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("Load Chart", use_container_width=True):
+        if st.button("🔄 Reload", use_container_width=True):
             st.cache_data.clear()
 
     ticker = ALL_SYMBOLS[symbol_name]
@@ -43,7 +43,17 @@ def show():
         df = get_ohlcv(ticker, interval=interval, period=period)
 
     if df.empty:
-        st.error("No data available for this symbol/timeframe combination. Markets may be closed or data unavailable.")
+        st.warning(f"No data returned for {symbol_name} at {timeframe}. Markets may be closed or this timeframe is unavailable. Try '1 day' or '5 min'.")
+        return
+
+    # Ensure all OHLC columns exist and have no NaN
+    for col in ["open", "high", "low", "close"]:
+        if col not in df.columns:
+            st.warning(f"Incomplete data for {symbol_name}.")
+            return
+    df = df.dropna(subset=["open", "high", "low", "close"])
+    if df.empty:
+        st.warning(f"No complete OHLC bars available for {symbol_name} at {timeframe}.")
         return
 
     df = compute_indicators(df)
@@ -181,7 +191,7 @@ def show():
         ann.font.color = "#8b949e"
         ann.font.size = 11
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key=f"chart_{ticker}_{interval}_{len(df)}")
 
     # Key stats
     st.divider()

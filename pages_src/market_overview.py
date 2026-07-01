@@ -49,6 +49,7 @@ def show():
     with col1:
         st.subheader("Nifty 50 — Intraday Chart")
         nifty_df = get_ohlcv("^NSEI", interval="5m", period="5d")
+        nifty_df = nifty_df.dropna(subset=["open", "high", "low", "close"]) if not nifty_df.empty else nifty_df
         if not nifty_df.empty:
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
                                 row_heights=[0.75, 0.25], vertical_spacing=0.03)
