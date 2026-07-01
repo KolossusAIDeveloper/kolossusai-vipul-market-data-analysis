@@ -39,6 +39,39 @@ const CHART_OPTS = {
 function NiftyChart() {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
+  const wrapRef = useRef(null);
+  const [fullscreen, setFullscreen] = useState(false);
+
+  // Toggle fullscreen on the wrapper
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    if (fullscreen) {
+      el.style.position = 'fixed';
+      el.style.inset = '0';
+      el.style.zIndex = '9999';
+      el.style.borderRadius = '0';
+      el.style.padding = '0';
+      document.body.style.overflow = 'hidden';
+      if (chartRef.current) chartRef.current.applyOptions({ height: window.innerHeight });
+    } else {
+      el.style.position = '';
+      el.style.inset = '';
+      el.style.zIndex = '';
+      el.style.borderRadius = '';
+      el.style.padding = '';
+      document.body.style.overflow = '';
+      if (chartRef.current) chartRef.current.applyOptions({ height: 320 });
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [fullscreen]);
+
+  // Escape key closes fullscreen
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape' && fullscreen) setFullscreen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fullscreen]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -67,10 +100,9 @@ function NiftyChart() {
           candleSeries.setData(d.candles);
           volSeries.setData(d.volume || []);
           chart.timeScale().fitContent();
-          // SMA 20
           if (d.indicators?.sma20?.length) {
-            const sma = chart.addLineSeries({ color: '#ffa500', lineWidth: 1, priceLineVisible: false });
-            sma.setData(d.indicators.sma20);
+            chart.addLineSeries({ color: '#ffa500', lineWidth: 1, priceLineVisible: false })
+              .setData(d.indicators.sma20);
           }
         }
       })
@@ -86,7 +118,18 @@ function NiftyChart() {
     return () => { ro.disconnect(); chart.remove(); chartRef.current = null; };
   }, []);
 
-  return <div ref={containerRef} className="w-full rounded-lg overflow-hidden" />;
+  return (
+    <div ref={wrapRef} className="relative bg-surface rounded-lg overflow-hidden">
+      <button
+        onClick={() => setFullscreen(f => !f)}
+        title={fullscreen ? 'Exit fullscreen (Esc)' : 'Expand to fullscreen'}
+        className="absolute top-2 right-2 z-10 w-7 h-7 flex items-center justify-center rounded border border-border/60 text-muted hover:text-primary hover:border-accent transition-colors text-sm bg-surface/80"
+      >
+        {fullscreen ? '⊡' : '⤢'}
+      </button>
+      <div ref={containerRef} className="w-full" />
+    </div>
+  );
 }
 
 export default function MarketOverview() {

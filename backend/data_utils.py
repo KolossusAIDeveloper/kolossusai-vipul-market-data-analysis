@@ -71,22 +71,12 @@ def ttl_cache(seconds: int = 60):
         return wrapper
     return decorator
 
-# ── Browser-like session to avoid rate limits ────────────────────────────────
-_SESSION = requests.Session()
-_SESSION.headers.update({
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-})
-
 # ── yfinance helpers ─────────────────────────────────────────────────────────
 def _fetch_history(ticker: str, period: str, interval: str) -> pd.DataFrame:
+    # No shared session — per-ticker Ticker() objects avoid Yahoo CDN returning
+    # cached data from a previous ticker across different requests.
     try:
-        t = yf.Ticker(ticker, session=_SESSION)
+        t = yf.Ticker(ticker)
         df = t.history(period=period, interval=interval, auto_adjust=True)
         if not df.empty:
             return df
@@ -149,7 +139,7 @@ def get_ohlcv(ticker: str, interval: str = "1d", period: str = "6mo") -> pd.Data
         df = df[needed].copy()
         df.index = pd.to_datetime(df.index)
         if df.index.tzinfo is not None:
-            df.index = df.index.tz_localize(None)
+            df.index = df.index.tz_convert(None)
         for col in ["open", "high", "low", "close", "volume"]:
             if col not in df.columns:
                 df[col] = np.nan

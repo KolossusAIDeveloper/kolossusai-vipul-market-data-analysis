@@ -22,7 +22,7 @@ const TIMEFRAMES = [
   { label: '1W', interval: '1wk', period: '5y' },
 ];
 
-const BASE_CHART_OPTS = {
+const CHART_THEME = {
   layout: { background: { color: '#0d1117' }, textColor: '#8b949e' },
   grid: { vertLines: { color: '#1f2937' }, horzLines: { color: '#1f2937' } },
   rightPriceScale: { borderColor: '#30363d' },
@@ -32,29 +32,17 @@ const BASE_CHART_OPTS = {
   handleScale: true,
 };
 
-function useChart(ref, height, extraOpts = {}) {
-  const chartRef = useRef(null);
-  useEffect(() => {
-    if (!ref.current) return;
-    const chart = createChart(ref.current, {
-      ...BASE_CHART_OPTS, ...extraOpts,
-      width: ref.current.clientWidth, height,
-    });
-    chartRef.current = chart;
-    const ro = new ResizeObserver(entries => {
-      if (chartRef.current && entries[0]) {
-        chartRef.current.applyOptions({ width: entries[0].contentRect.width });
-      }
-    });
-    ro.observe(ref.current);
-    return () => { ro.disconnect(); chart.remove(); chartRef.current = null; };
-  }, []);
-  return chartRef;
+function mkChart(container, height, extra = {}) {
+  return createChart(container, {
+    ...CHART_THEME, ...extra,
+    width: container.clientWidth,
+    height,
+  });
 }
 
 export default function Charts() {
   const [symbol, setSymbol] = useState('Nifty 50');
-  const [tf, setTf] = useState(TIMEFRAMES[4]);
+  const [tf, setTf] = useState(TIMEFRAMES[4]); // default 1D
   const [indicators, setIndicators] = useState({
     sma20: true, sma50: false, ema20: false, bb: false,
     vwap: false, supertrend: false, rsi: true, macd: false,
@@ -62,48 +50,40 @@ export default function Charts() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [fullscreen, setFullscreen] = useState(false);
 
-  // Chart containers
+  // DOM container refs — always mounted
   const priceRef = useRef(null);
   const volRef = useRef(null);
   const rsiRef = useRef(null);
   const macdRef = useRef(null);
+  const wrapperRef = useRef(null);
 
-  const priceChart = useChart(priceRef, 380);
-  const volChart = useChart(volRef, 90, { rightPriceScale: { borderColor: '#30363d', scaleMargins: { top: 0.1, bottom: 0.1 } } });
-  const rsiChart = useChart(rsiRef, 100);
-  const macdChart = useChart(macdRef, 100);
+  // TradingView chart instance refs
+  const charts = useRef({ price: null, vol: null, rsi: null, macd: null });
 
-  // Sync time scales
-  useEffect(() => {
-    const charts = [priceChart, volChart, rsiChart, macdChart].map(r => r.current).filter(Boolean);
-    if (charts.length < 2) return;
-    const handlers = charts.map((src, i) => {
-      const handler = range => {
-        if (!range) return;
-        charts.forEach((dst, j) => { if (i !== j && dst) dst.timeScale().setVisibleLogicalRange(range); });
-      };
-      src.timeScale().subscribeVisibleLogicalRangeChange(handler);
-      return { src, handler };
-    });
-    return () => handlers.forEach(({ src, handler }) => src.timeScale().unsubscribeVisibleLogicalRangeChange(handler));
-  }, [data]);
-
-  // Apply chart data
-  useEffect(() => {
-    if (!data || !priceChart.current) return;
-
-    // Clear all series
-    [priceChart, volChart, rsiChart, macdChart].forEach(cr => {
-      if (cr.current) {
-        try { cr.current.removeSeries && null; } catch (e) {}
+  // Destroy all active chart instances
+  const destroyCharts = useCallback(() => {
+    Object.keys(charts.current).forEach(k => {
+      if (charts.current[k]) {
+        try { charts.current[k].remove(); } catch (_) {}
+        charts.current[k] = null;
       }
     });
+  }, []);
 
-    const pc = priceChart.current;
-    const vc = volChart.current;
+  // Build / rebuild charts whenever data or indicators change
+  useEffect(() => {
+    if (!data || !priceRef.current || !volRef.current) return;
 
-    // Candles
+    destroyCharts();
+
+    const priceHeight = fullscreen ? Math.max(300, window.innerHeight - 350) : 380;
+
+    // Price chart
+    const pc = mkChart(priceRef.current, priceHeight);
+    charts.current.price = pc;
+
     if (data.candles?.length) {
       const cs = pc.addCandlestickSeries({
         upColor: '#00ff88', downColor: '#ff4444',
@@ -112,87 +92,127 @@ export default function Charts() {
       });
       cs.setData(data.candles);
 
-      // Overlays
       const ind = data.indicators || {};
-      if (indicators.sma20 && ind.sma20?.length) {
-        const s = pc.addLineSeries({ color: '#ffa500', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false });
-        s.setData(ind.sma20);
-      }
-      if (indicators.sma50 && ind.sma50?.length) {
-        const s = pc.addLineSeries({ color: '#a78bfa', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false });
-        s.setData(ind.sma50);
-      }
-      if (indicators.ema20 && ind.ema20?.length) {
-        const s = pc.addLineSeries({ color: '#38bdf8', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false });
-        s.setData(ind.ema20);
-      }
-      if (indicators.vwap && ind.vwap?.length) {
-        const s = pc.addLineSeries({ color: '#fb923c', lineWidth: 1.5, lineStyle: 1, priceLineVisible: false, lastValueVisible: false });
-        s.setData(ind.vwap);
-      }
+
+      if (indicators.sma20 && ind.sma20?.length)
+        pc.addLineSeries({ color: '#ffa500', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false }).setData(ind.sma20);
+
+      if (indicators.sma50 && ind.sma50?.length)
+        pc.addLineSeries({ color: '#a78bfa', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false }).setData(ind.sma50);
+
+      if (indicators.ema20 && ind.ema20?.length)
+        pc.addLineSeries({ color: '#38bdf8', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false }).setData(ind.ema20);
+
+      if (indicators.vwap && ind.vwap?.length)
+        pc.addLineSeries({ color: '#fb923c', lineWidth: 1.5, lineStyle: 1, priceLineVisible: false, lastValueVisible: false }).setData(ind.vwap);
+
       if (indicators.bb) {
-        if (ind.bb_upper?.length) {
-          const u = pc.addLineSeries({ color: '#64748b', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
-          u.setData(ind.bb_upper);
-        }
-        if (ind.bb_mid?.length) {
-          const m = pc.addLineSeries({ color: '#475569', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
-          m.setData(ind.bb_mid);
-        }
-        if (ind.bb_lower?.length) {
-          const l = pc.addLineSeries({ color: '#64748b', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false });
-          l.setData(ind.bb_lower);
-        }
+        if (ind.bb_upper?.length) pc.addLineSeries({ color: '#64748b', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false }).setData(ind.bb_upper);
+        if (ind.bb_mid?.length)   pc.addLineSeries({ color: '#475569', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false }).setData(ind.bb_mid);
+        if (ind.bb_lower?.length) pc.addLineSeries({ color: '#64748b', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false }).setData(ind.bb_lower);
       }
-      if (indicators.supertrend && ind.supertrend?.length) {
-        const s = pc.addLineSeries({ color: '#00ff88', lineWidth: 2, priceLineVisible: false, lastValueVisible: false });
-        s.setData(ind.supertrend);
-      }
+
+      if (indicators.supertrend && ind.supertrend?.length)
+        pc.addLineSeries({ color: '#00ff88', lineWidth: 2, priceLineVisible: false, lastValueVisible: false }).setData(ind.supertrend);
 
       pc.timeScale().fitContent();
     }
 
-    // Volume
-    if (vc && data.volume?.length) {
+    // Volume chart
+    const vc = mkChart(volRef.current, 90, {
+      rightPriceScale: { borderColor: '#30363d', scaleMargins: { top: 0.1, bottom: 0.1 } },
+    });
+    charts.current.vol = vc;
+    if (data.volume?.length) {
       const vs = vc.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: '' });
       vc.priceScale('').applyOptions({ scaleMargins: { top: 0.1, bottom: 0 } });
       vs.setData(data.volume);
       vc.timeScale().fitContent();
     }
 
-    // RSI
-    if (indicators.rsi && rsiChart.current && data.indicators?.rsi?.length) {
-      const rc = rsiChart.current;
+    // RSI chart
+    if (indicators.rsi && rsiRef.current && data.indicators?.rsi?.length) {
+      const rc = mkChart(rsiRef.current, 100);
+      charts.current.rsi = rc;
       const rs = rc.addLineSeries({ color: '#38bdf8', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: true });
       rs.setData(data.indicators.rsi);
-      rc.addLineSeries({ color: '#ff4444', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false }).setData(
-        data.indicators.rsi.map(p => ({ ...p, value: 70 }))
-      );
-      rc.addLineSeries({ color: '#00ff88', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false }).setData(
-        data.indicators.rsi.map(p => ({ ...p, value: 30 }))
-      );
+      rc.addLineSeries({ color: '#ff4444', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false })
+        .setData(data.indicators.rsi.map(p => ({ ...p, value: 70 })));
+      rc.addLineSeries({ color: '#00ff88', lineWidth: 1, lineStyle: 2, priceLineVisible: false, lastValueVisible: false })
+        .setData(data.indicators.rsi.map(p => ({ ...p, value: 30 })));
       rc.priceScale('right').applyOptions({ scaleMargins: { top: 0.1, bottom: 0.1 } });
       rc.timeScale().fitContent();
     }
 
-    // MACD
-    if (indicators.macd && macdChart.current && data.indicators?.macd?.length) {
-      const mc = macdChart.current;
-      const ms = mc.addLineSeries({ color: '#38bdf8', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false });
-      ms.setData(data.indicators.macd);
-      if (data.indicators.macd_signal?.length) {
-        const sig = mc.addLineSeries({ color: '#ffa500', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false });
-        sig.setData(data.indicators.macd_signal);
-      }
-      if (data.indicators.macd_hist?.length) {
-        const hist = mc.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false });
-        hist.setData(data.indicators.macd_hist.map(p => ({
-          ...p, color: p.value >= 0 ? '#00ff8866' : '#ff444466',
-        })));
-      }
+    // MACD chart
+    if (indicators.macd && macdRef.current && data.indicators?.macd?.length) {
+      const mc = mkChart(macdRef.current, 100);
+      charts.current.macd = mc;
+      mc.addLineSeries({ color: '#38bdf8', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false })
+        .setData(data.indicators.macd);
+      if (data.indicators.macd_signal?.length)
+        mc.addLineSeries({ color: '#ffa500', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false })
+          .setData(data.indicators.macd_signal);
+      if (data.indicators.macd_hist?.length)
+        mc.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false })
+          .setData(data.indicators.macd_hist.map(p => ({ ...p, color: p.value >= 0 ? '#00ff8866' : '#ff444466' })));
       mc.timeScale().fitContent();
     }
-  }, [data, indicators]);
+
+    // Sync timescales
+    const activeCharts = Object.values(charts.current).filter(Boolean);
+    const handlers = activeCharts.map(src => {
+      const h = range => {
+        if (!range) return;
+        activeCharts.forEach(dst => { if (dst !== src) { try { dst.timeScale().setVisibleLogicalRange(range); } catch (_) {} } });
+      };
+      src.timeScale().subscribeVisibleLogicalRangeChange(h);
+      return { src, h };
+    });
+
+    // ResizeObserver to keep charts filling their containers
+    const ro = new ResizeObserver(() => {
+      const w = priceRef.current?.clientWidth;
+      if (!w) return;
+      Object.values(charts.current).forEach(c => { if (c) try { c.applyOptions({ width: w }); } catch (_) {} });
+    });
+    if (priceRef.current) ro.observe(priceRef.current);
+
+    return () => {
+      handlers.forEach(({ src, h }) => { try { src.timeScale().unsubscribeVisibleLogicalRangeChange(h); } catch (_) {} });
+      ro.disconnect();
+      destroyCharts();
+    };
+  }, [data, indicators, fullscreen, destroyCharts]);
+
+  // Toggle fullscreen via CSS on the wrapper div
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el) return;
+    if (fullscreen) {
+      el.style.position = 'fixed';
+      el.style.inset = '0';
+      el.style.zIndex = '9999';
+      el.style.borderRadius = '0';
+      el.style.overflow = 'auto';
+      document.body.style.overflow = 'hidden';
+    } else {
+      el.style.position = '';
+      el.style.inset = '';
+      el.style.zIndex = '';
+      el.style.borderRadius = '';
+      el.style.overflow = '';
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [fullscreen]);
+
+  // Keyboard shortcut: Escape closes fullscreen
+  useEffect(() => {
+    const onKey = e => { if (e.key === 'Escape' && fullscreen) setFullscreen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fullscreen]);
 
   const loadChart = useCallback(async () => {
     const ticker = ALL_SYMBOLS[symbol];
@@ -203,7 +223,7 @@ export default function Charts() {
     try {
       const url = `/api/ohlcv/${encodeURIComponent(ticker)}?interval=${tf.interval}&period=${tf.period}`;
       const res = await fetch(url);
-      if (!res.ok) throw new Error('No data available');
+      if (!res.ok) throw new Error(`No data available (${res.status})`);
       setData(await res.json());
     } catch (e) {
       setError(e.message);
@@ -279,23 +299,15 @@ export default function Charts() {
         ))}
       </div>
 
-      {/* Charts */}
-      {loading && (
-        <div className="flex items-center justify-center h-96 text-muted">
-          <span className="spin inline-block mr-2">↻</span> Loading chart data…
-        </div>
-      )}
-      {error && (
-        <div className="bg-bear/10 border border-bear/30 rounded-lg p-4 text-bear text-sm mb-4">
-          {error} — Markets may be closed or data unavailable.
-        </div>
-      )}
-
-      {!loading && !error && (
-        <div className="bg-surface border border-border rounded-lg overflow-hidden mb-4">
-          {/* Symbol header */}
-          <div className="px-4 py-2 border-b border-border flex items-center justify-between">
-            <span className="text-sm font-semibold text-primary">{symbol} — {tf.label}</span>
+      {/* Chart panel — ALWAYS in DOM so TradingView refs are available on mount */}
+      <div
+        ref={wrapperRef}
+        className="bg-surface border border-border rounded-lg overflow-hidden mb-4"
+      >
+        {/* Header */}
+        <div className="px-4 py-2 border-b border-border flex items-center justify-between">
+          <span className="text-sm font-semibold text-primary">{symbol} — {tf.label}</span>
+          <div className="flex items-center gap-3">
             {stats && (
               <span className={`text-sm font-bold ${stats.change >= 0 ? 'text-bull' : 'text-bear'}`}>
                 ₹{stats.last_close.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
@@ -304,30 +316,60 @@ export default function Charts() {
                 </span>
               </span>
             )}
+            {/* Fullscreen toggle */}
+            <button
+              onClick={() => setFullscreen(f => !f)}
+              title={fullscreen ? 'Exit fullscreen (Esc)' : 'Expand to fullscreen'}
+              className="w-7 h-7 flex items-center justify-center rounded border border-border text-muted hover:text-primary hover:border-accent transition-colors text-sm"
+            >
+              {fullscreen ? '⊡' : '⤢'}
+            </button>
           </div>
+        </div>
+
+        {/* Loading state */}
+        {loading && (
+          <div className="flex items-center justify-center py-10 text-sm">
+            <span className="spin inline-block mr-2 text-accent text-lg">↻</span>
+            <span className="text-muted">Loading {symbol} data…</span>
+          </div>
+        )}
+
+        {/* Error state */}
+        {error && (
+          <div className="p-6 text-center text-bear text-sm">
+            {error} — Markets may be closed or data unavailable for this timeframe.
+          </div>
+        )}
+
+        {/* Chart containers — ALWAYS in DOM so TradingView refs are valid on first render */}
+        <div style={{ display: (loading || error) ? 'none' : 'block' }}>
           {/* Price chart */}
           <div ref={priceRef} className="w-full" />
-          {/* Volume chart */}
+
+          {/* Volume */}
           <div className="border-t border-border/40">
-            <div className="px-3 pt-1 text-[10px] text-muted">VOLUME</div>
+            <div className="px-3 pt-1 text-[10px] text-muted uppercase tracking-wider">Volume</div>
             <div ref={volRef} className="w-full" />
           </div>
-          {/* RSI chart */}
+
+          {/* RSI */}
           {indicators.rsi && (
             <div className="border-t border-border/40">
-              <div className="px-3 pt-1 text-[10px] text-muted">RSI (14)</div>
+              <div className="px-3 pt-1 text-[10px] text-muted uppercase tracking-wider">RSI (14)</div>
               <div ref={rsiRef} className="w-full" />
             </div>
           )}
-          {/* MACD chart */}
+
+          {/* MACD */}
           {indicators.macd && (
             <div className="border-t border-border/40">
-              <div className="px-3 pt-1 text-[10px] text-muted">MACD (12, 26, 9)</div>
+              <div className="px-3 pt-1 text-[10px] text-muted uppercase tracking-wider">MACD (12, 26, 9)</div>
               <div ref={macdRef} className="w-full" />
             </div>
           )}
         </div>
-      )}
+      </div>
 
       {/* Stats */}
       {stats && (
